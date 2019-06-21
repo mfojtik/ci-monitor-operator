@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: config-history-operator
+  name: config-history-operator
+  labels:
+    app: config-history-operator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: config-history-operator
+  template:
+    metadata:
+      name: config-history-operator
+      labels:
+        app: config-history-operator
+    spec:
+      serviceAccountName: config-history-operator
+      containers:
+        - name: config-history-operator
+          image: docker.io/mfojtik/config-history-operator:v0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8443
+              name: metrics
+              protocol: TCP
+          command: ["config-history-operator", "operator"]
+          resources:
+            requests:
+              memory: 50Mi
+              cpu: 10m
+          env:
+            - name: OPERATOR_IMAGE
+              value: docker.io/mfojtik/config-history-operator:v0.1
+            - name: OPERAND_IMAGE_VERSION
+              value: "0.0.1-snapshot-config-history"
+            - name: OPERATOR_IMAGE_VERSION
+              value: "0.0.1-snapshot"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          terminationMessagePolicy: FallbackToLogsOnError
