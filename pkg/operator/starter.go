@@ -9,6 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 
 	"github.com/mfojtik/config-history-operator/pkg/controller"
+	"github.com/mfojtik/config-history-operator/pkg/gitserver"
 	"github.com/mfojtik/config-history-operator/pkg/storage"
 )
 
@@ -39,6 +40,9 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	}
 
 	go openshiftConfigObserver.Run(ctx.Done())
+
+	// Run git server so we can browse the history
+	go gitserver.Run("/tmp/repository", "0.0.0.0:8080")
 
 	<-ctx.Done()
 
