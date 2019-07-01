@@ -113,6 +113,7 @@ func (s *GitStorage) addConfigObject(obj interface{}) {
 	if err != nil {
 		panic(err)
 	}
+	klog.Infof("Observed change in %q ...", getConfigName(unstruct.GroupVersionKind()))
 	if err := s.updateFile(getConfigName(unstruct.GroupVersionKind()), objBytes); err != nil {
 		klog.Warningf("Failed to adding change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
 	}

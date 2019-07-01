@@ -39,6 +39,9 @@ type ConfigObserverController struct {
 	recorder     events.Recorder
 	stopCh       <-chan struct{}
 
+	readyCh <-chan struct{}
+	isReady bool
+
 	crdLister       apiextensionsv1beta1lister.CustomResourceDefinitionLister
 	crdInformer     cache.SharedIndexInformer
 	dynamicClient   dynamic.Interface
@@ -64,7 +67,10 @@ func NewOpenShiftConfigObserverController(
 	c.cachedDiscovery = memory.NewMemCacheClient(discoveryClient)
 	c.crdLister = apiextensionsv1beta1lister.NewCustomResourceDefinitionLister(c.crdInformer.GetIndexer())
 	c.crdInformer.AddEventHandler(c.eventHandler())
-	c.cachesToSync = append(c.cachesToSync, c.crdInformer.HasSynced)
+
+	c.cachesToSync = []cache.InformerSynced{
+		c.crdInformer.HasSynced,
+	}
 
 	return c, nil
 }
@@ -77,6 +83,7 @@ func (c *ConfigObserverController) currentOpenShiftConfigResourceKinds() ([]sche
 	}
 	var currentConfigResources []schema.GroupVersionKind
 	for _, crd := range observedCrds {
+		klog.V(5).Infof("Observed custom resource definition %q", crd.GetName())
 		// Match only .config.openshift.io
 		if !strings.HasSuffix(crd.GetName(), configSuffix) {
 			continue
@@ -85,11 +92,13 @@ func (c *ConfigObserverController) currentOpenShiftConfigResourceKinds() ([]sche
 			if !version.Served {
 				continue
 			}
-			currentConfigResources = append(currentConfigResources, schema.GroupVersionKind{
+			gvk := schema.GroupVersionKind{
 				Group:   crd.Name,
 				Version: version.Name,
 				Kind:    crd.Spec.Names.Kind,
-			})
+			}
+			klog.V(5).Infof("Adding %q to list of observable resource definitions", gvk.String())
+			currentConfigResources = append(currentConfigResources, gvk)
 		}
 	}
 	return currentConfigResources, nil
@@ -102,8 +111,13 @@ func (c *ConfigObserverController) sync() error {
 	}
 
 	// TODO: The CRD delete case is not handled
-	var kindNeedObserver []schema.GroupVersionKind
+	var (
+		currentList      []string
+		needObserverList []string
+		kindNeedObserver []schema.GroupVersionKind
+	)
 	for _, configKind := range current {
+		currentList = append(currentList, configKind.String())
 		hasObserver := false
 		for _, o := range c.openshiftConfigObservers {
 			if o.isKind(configKind) {
@@ -113,10 +127,15 @@ func (c *ConfigObserverController) sync() error {
 		}
 		if !hasObserver {
 			kindNeedObserver = append(kindNeedObserver, configKind)
+			needObserverList = append(needObserverList, configKind.String())
 		}
 	}
+	klog.V(5).Infof("Synchronizing %q, need observer for: %q ...", strings.Join(currentList, ","), strings.Join(needObserverList, ","))
 
-	var waitForCacheSyncFn []cache.InformerSynced
+	var (
+		waitForCacheSyncFn  []cache.InformerSynced
+		syntheticRequeueErr error
+	)
 
 	// If we have new CRD refresh the discovery info and update the mapper
 	if len(kindNeedObserver) > 0 {
@@ -131,7 +150,9 @@ func (c *ConfigObserverController) sync() error {
 		for _, kind := range kindNeedObserver {
 			mapping, err := mapper.RESTMapping(kind.GroupKind(), kind.Version)
 			if err != nil {
+				klog.Warningf("Unable to find REST mapping for %s/%s: %v (will retry)", kind.GroupKind(), kind.Version, err)
 				// better luck next time
+				syntheticRequeueErr = err
 				continue
 			}
 
@@ -139,10 +160,11 @@ func (c *ConfigObserverController) sync() error {
 			dynamicInformer := newDynamicConfigInformer(kind.Kind, mapping.Resource, c.dynamicClient, c.configStorage.EventHandlers())
 			waitForCacheSyncFn = append(waitForCacheSyncFn, dynamicInformer.hasInformerCacheSynced)
 
-			go func() {
+			go func(k schema.GroupVersionKind) {
+				defer klog.V(3).Infof("Shutting down dynamic informer for %q ...", k.String())
+				klog.V(3).Infof("Starting dynamic informer for %q ...", k.String())
 				dynamicInformer.run(c.stopCh)
-				klog.Infof("Started %s", dynamicInformer)
-			}()
+			}(kind)
 			c.openshiftConfigObservers = append(c.openshiftConfigObservers, dynamicInformer)
 		}
 	}
@@ -153,7 +175,7 @@ func (c *ConfigObserverController) sync() error {
 		return fmt.Errorf("timeout while waiting for dynamic informers to start: %#v", kindNeedObserver)
 	}
 
-	return nil
+	return syntheticRequeueErr
 }
 
 // eventHandler queues the operator to check spec and status
@@ -176,9 +198,17 @@ func (c *ConfigObserverController) Run(stopCh <-chan struct{}) {
 	klog.Infof("Starting ConfigObserver")
 	defer klog.Infof("Shutting down ConfigObserver")
 
+	go func() {
+		klog.V(3).Infof("Starting CRD informer ...")
+		defer klog.V(3).Infof("Shutting down CRD informer ...")
+		c.crdInformer.Run(stopCh)
+	}()
+
+	klog.Infof("Waiting for caches to sync ...")
 	if !cache.WaitForCacheSync(stopCh, c.cachesToSync...) {
-		return
+		panic("Failed to wait for caches to sync ...")
 	}
+	klog.V(5).Infof("Successfully synchronized caches")
 
 	// doesn't matter what workers say, only start one.
 	go wait.Until(c.runWorker, time.Second, stopCh)

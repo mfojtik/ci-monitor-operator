@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: config-history-operator
+  name: config-history-operator-config
+data:
+  config.yaml:

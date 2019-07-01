@@ -19,15 +19,23 @@ spec:
         app: config-history-operator
     spec:
       serviceAccountName: config-history-operator
+      volumes:
+        - name: config
+          configMap:
+            name: config-history-operator-config
       containers:
         - name: config-history-operator
           image: docker.io/mfojtik/config-history-operator:v0.1
           imagePullPolicy: IfNotPresent
+          volumeMounts:
+          - mountPath: /var/run/configmaps/config
+            name: config
           ports:
             - containerPort: 8443
               name: metrics
               protocol: TCP
           command: ["config-history-operator", "operator"]
+          args: ["--config=/var/run/configmaps/config/config.yaml", "--v=5"]
           resources:
             requests:
               memory: 50Mi
