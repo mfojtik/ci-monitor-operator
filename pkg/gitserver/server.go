@@ -31,8 +31,8 @@ func Run(directory string, addr string) {
 	klog.Infof("Git HTTP Server is starting...")
 
 	router := http.NewServeMux()
-	router.Handle("/", index())
-	router.Handle("/healthz", healthz())
+	router.Handle("/cluster-config", index())
+	router.Handle("/cluster-config/healthz", healthz())
 
 	nextRequestID := func() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
