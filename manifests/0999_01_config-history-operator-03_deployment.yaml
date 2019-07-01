@@ -26,13 +26,16 @@ spec:
       containers:
         - name: config-history-operator
           image: docker.io/mfojtik/config-history-operator:v0.1
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always # Change this when the operator is stable
           volumeMounts:
           - mountPath: /var/run/configmaps/config
             name: config
           ports:
             - containerPort: 8443
               name: metrics
+              protocol: TCP
+            - containerPort: 8080
+              name: gitserver
               protocol: TCP
           command: ["config-history-operator", "operator"]
           args: ["--config=/var/run/configmaps/config/config.yaml", "--v=5"]

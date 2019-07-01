@@ -223,8 +223,9 @@ func (c *ConfigObserverController) Run(stopCh <-chan struct{}) {
 		panic("Failed to wait for caches to sync ...")
 	}
 	klog.V(5).Infof("Successfully synchronized caches")
-	c.isReady = true
+
 	if !c.isReady {
+		c.isReady = true
 		close(c.readyCh)
 	}
 

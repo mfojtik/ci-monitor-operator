@@ -3,13 +3,14 @@ package gitserver
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"k8s.io/klog"
 )
 
 type key int
@@ -27,8 +28,7 @@ var (
 func Run(directory string, addr string) {
 	listenAddr = addr
 	directory = directory
-	logger := log.New(os.Stdout, "http: ", log.LstdFlags)
-	logger.Println("Server is starting...")
+	klog.Infof("Git HTTP Server is starting...")
 
 	router := http.NewServeMux()
 	router.Handle("/", index())
@@ -40,8 +40,7 @@ func Run(directory string, addr string) {
 
 	server := &http.Server{
 		Addr:         listenAddr,
-		Handler:      tracing(nextRequestID)(logging(logger)(router)),
-		ErrorLog:     logger,
+		Handler:      tracing(nextRequestID)(logging()(router)),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  15 * time.Second,
@@ -53,7 +52,7 @@ func Run(directory string, addr string) {
 
 	go func() {
 		<-quit
-		logger.Println("Server is shutting down...")
+		klog.Infof("Git HTTP Server is shutting down...")
 		atomic.StoreInt32(&healthy, 0)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -61,19 +60,18 @@ func Run(directory string, addr string) {
 
 		server.SetKeepAlivesEnabled(false)
 		if err := server.Shutdown(ctx); err != nil {
-			logger.Fatalf("Could not gracefully shutdown the server: %v\n", err)
+			klog.Fatalf("Could not gracefully shutdown the server: %v\n", err)
 		}
 		close(done)
 	}()
 
-	logger.Println("Server is ready to handle requests at", listenAddr)
+	klog.Infof("Server is ready to handle requests at", listenAddr)
 	atomic.StoreInt32(&healthy, 1)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		logger.Fatalf("Could not listen on %s: %v\n", listenAddr, err)
+		klog.Fatalf("Could not listen on %s: %v\n", listenAddr, err)
 	}
 
 	<-done
-	logger.Println("Server stopped")
 }
 
 func index() http.Handler {
@@ -92,7 +90,7 @@ func healthz() http.Handler {
 	})
 }
 
-func logging(logger *log.Logger) func(http.Handler) http.Handler {
+func logging() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -100,7 +98,7 @@ func logging(logger *log.Logger) func(http.Handler) http.Handler {
 				if !ok {
 					requestID = "unknown"
 				}
-				logger.Println(requestID, r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
+				klog.Infof(requestID, r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
 			}()
 			next.ServeHTTP(w, r)
 		})
