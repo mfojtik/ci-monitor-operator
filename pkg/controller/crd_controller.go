@@ -39,7 +39,7 @@ type ConfigObserverController struct {
 	recorder     events.Recorder
 	stopCh       <-chan struct{}
 
-	readyCh <-chan struct{}
+	readyCh chan struct{}
 	isReady bool
 
 	crdLister       apiextensionsv1beta1lister.CustomResourceDefinitionLister
@@ -67,6 +67,7 @@ func NewOpenShiftConfigObserverController(
 	c.cachedDiscovery = memory.NewMemCacheClient(discoveryClient)
 	c.crdLister = apiextensionsv1beta1lister.NewCustomResourceDefinitionLister(c.crdInformer.GetIndexer())
 	c.crdInformer.AddEventHandler(c.eventHandler())
+	c.readyCh = make(chan struct{})
 
 	c.cachesToSync = []cache.InformerSynced{
 		c.crdInformer.HasSynced,
@@ -93,8 +94,8 @@ func (c *ConfigObserverController) currentOpenShiftConfigResourceKinds() ([]sche
 				continue
 			}
 			gvk := schema.GroupVersionKind{
-				Group:   crd.Name,
-				Version: version.Name,
+				Group:   "config.openshift.io",
+				Version: "v1",
 				Kind:    crd.Spec.Names.Kind,
 			}
 			klog.V(5).Infof("Adding %q to list of observable resource definitions", gvk.String())
@@ -141,6 +142,14 @@ func (c *ConfigObserverController) sync() error {
 	if len(kindNeedObserver) > 0 {
 		// NOTE: this is very time expensive, only do this when we have new kinds
 		c.cachedDiscovery.Invalidate()
+
+		serverGroups, err := c.cachedDiscovery.ServerGroups()
+		if err != nil {
+			return err
+		}
+		for _, g := range serverGroups.Groups {
+			klog.Infof("Discovered server group %v", g.String())
+		}
 		gr, err := restmapper.GetAPIGroupResources(c.cachedDiscovery)
 		if err != nil {
 			return err
@@ -187,6 +196,10 @@ func (c *ConfigObserverController) eventHandler() cache.ResourceEventHandler {
 	}
 }
 
+func (c ConfigObserverController) IsReady() <-chan struct{} {
+	return c.readyCh
+}
+
 // Run starts the kube-apiserver and blocks until stopCh is closed.
 func (c *ConfigObserverController) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
@@ -209,6 +222,10 @@ func (c *ConfigObserverController) Run(stopCh <-chan struct{}) {
 		panic("Failed to wait for caches to sync ...")
 	}
 	klog.V(5).Infof("Successfully synchronized caches")
+	c.isReady = true
+	if !c.isReady {
+		close(c.readyCh)
+	}
 
 	// doesn't matter what workers say, only start one.
 	go wait.Until(c.runWorker, time.Second, stopCh)

@@ -41,8 +41,12 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 
 	go openshiftConfigObserver.Run(ctx.Done())
 
-	// Run git server so we can browse the history
-	go gitserver.Run("/tmp/repository", "0.0.0.0:8080")
+	// Run git server so we can browse the history but wait for the observer to be running first
+	// This is also used to report healthz
+	go func() {
+		<-openshiftConfigObserver.IsReady()
+		gitserver.Run("/tmp/repository", "0.0.0.0:8080")
+	}()
 
 	<-ctx.Done()
 
