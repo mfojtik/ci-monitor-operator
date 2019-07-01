@@ -7,6 +7,8 @@ RUN go build -ldflags "-X $GO_PACKAGE/pkg/version.versionFromGit=$(git describe 
 FROM registry.svc.ci.openshift.org/openshift/origin-v4.0:base
 RUN mkdir -p /usr/share/bootkube/manifests
 COPY --from=builder /go/src/github.com/mfojtik/config-history-operator/config-history-operator /usr/bin/
+# TODO: Hack for debugging
+COPY --from=builder /usr/bin/git /usr/bin/git
 COPY manifests/*.yaml /manifests
 # COPY manifests/image-references /manifests
 LABEL io.openshift.release.operator true

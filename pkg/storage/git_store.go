@@ -122,7 +122,7 @@ func (s *GitStorage) addConfigObject(obj interface{}) {
 		klog.Warningf("Failed to commit change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
 	}
 
-	klog.Infof("Commited %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
+	klog.Infof("Committed %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
 }
 
 func (s *GitStorage) updateConfigObject(old, new interface{}) {
@@ -144,7 +144,7 @@ func (s *GitStorage) deleteConfigObject(obj interface{}) {
 		klog.Warningf("Failed to commit change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
 	}
 
-	klog.Infof("Commited %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
+	klog.Infof("Committed %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
 }
 
 func (s *GitStorage) EventHandlers() cache.ResourceEventHandlerFuncs {

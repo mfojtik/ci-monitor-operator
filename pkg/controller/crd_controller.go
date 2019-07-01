@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -27,11 +28,15 @@ import (
 )
 
 const (
-	configSuffix           = ".config.openshift.io"
+	configGroupName        = "config.openshift.io"
+	configVersion          = "v1"
 	controllerWorkQueueKey = "key"
 )
 
-var defaultResyncDuration = 5 * time.Minute
+var (
+	defaultResyncDuration = 5 * time.Minute
+	configSuffix          = "." + configGroupName
+)
 
 type ConfigObserverController struct {
 	cachesToSync []cache.InformerSynced
@@ -82,10 +87,11 @@ func (c *ConfigObserverController) currentOpenShiftConfigResourceKinds() ([]sche
 	if err != nil {
 		return nil, err
 	}
-	var currentConfigResources []schema.GroupVersionKind
+	var (
+		currentConfigResources []schema.GroupVersionKind
+		currentKinds           = sets.NewString()
+	)
 	for _, crd := range observedCrds {
-		klog.V(5).Infof("Observed custom resource definition %q", crd.GetName())
-		// Match only .config.openshift.io
 		if !strings.HasSuffix(crd.GetName(), configSuffix) {
 			continue
 		}
@@ -94,11 +100,14 @@ func (c *ConfigObserverController) currentOpenShiftConfigResourceKinds() ([]sche
 				continue
 			}
 			gvk := schema.GroupVersionKind{
-				Group:   "config.openshift.io",
-				Version: "v1",
+				Group:   configGroupName,
+				Version: configVersion,
 				Kind:    crd.Spec.Names.Kind,
 			}
-			klog.V(5).Infof("Adding %q to list of observable resource definitions", gvk.String())
+			if currentKinds.Has(gvk.Kind) {
+				continue
+			}
+			currentKinds.Insert(gvk.Kind)
 			currentConfigResources = append(currentConfigResources, gvk)
 		}
 	}
@@ -131,7 +140,7 @@ func (c *ConfigObserverController) sync() error {
 			needObserverList = append(needObserverList, configKind.String())
 		}
 	}
-	klog.V(5).Infof("Synchronizing %q, need observer for: %q ...", strings.Join(currentList, ","), strings.Join(needObserverList, ","))
+	klog.V(5).Infof("Need synchronization: %q", strings.Join(needObserverList, ","))
 
 	var (
 		waitForCacheSyncFn  []cache.InformerSynced
@@ -142,14 +151,6 @@ func (c *ConfigObserverController) sync() error {
 	if len(kindNeedObserver) > 0 {
 		// NOTE: this is very time expensive, only do this when we have new kinds
 		c.cachedDiscovery.Invalidate()
-
-		serverGroups, err := c.cachedDiscovery.ServerGroups()
-		if err != nil {
-			return err
-		}
-		for _, g := range serverGroups.Groups {
-			klog.Infof("Discovered server group %v", g.String())
-		}
 		gr, err := restmapper.GetAPIGroupResources(c.cachedDiscovery)
 		if err != nil {
 			return err
