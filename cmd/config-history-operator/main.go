@@ -14,6 +14,7 @@ import (
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 
+	"github.com/mfojtik/config-history-operator/pkg/cmd/gitserver"
 	operatorcmd "github.com/mfojtik/config-history-operator/pkg/cmd/operator"
 )
 
@@ -54,6 +55,7 @@ func NewOperatorCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(operatorcmd.NewOperator())
+	cmd.AddCommand(gitserver.NewGitServer())
 
 	return cmd
 }

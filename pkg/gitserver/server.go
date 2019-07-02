@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,18 +22,18 @@ const (
 var (
 	listenAddr string
 	healthy    int32
-	repoDir    string
 )
 
 func Run(directory string, addr string) {
 	listenAddr = addr
-	repoDir = directory
 
 	klog.Infof("Started serving GIT repository on %s/cluster-config ...", listenAddr)
 
 	router := http.NewServeMux()
-	router.Handle("/cluster-config", index())
-	router.Handle("/cluster-config/healthz", healthz())
+
+	fileserver := http.FileServer(http.Dir(filepath.Join(directory, ".git")))
+	router.Handle("/", fileserver)
+	router.Handle("/healthz", healthz())
 
 	nextRequestID := func() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
@@ -67,32 +66,13 @@ func Run(directory string, addr string) {
 		close(done)
 	}()
 
-	klog.Infof("Server is ready to handle requests at", listenAddr)
+	klog.Infof("Server is ready to handle requests at %q", listenAddr)
 	atomic.StoreInt32(&healthy, 1)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		klog.Fatalf("Could not listen on %s: %v\n", listenAddr, err)
 	}
 
 	<-done
-}
-
-type prefixedHandler struct {
-	prefix string
-}
-
-func (h *prefixedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	fileServer := http.FileServer(http.Dir(filepath.Join(repoDir, ".git")))
-	req.URL.Path = strings.TrimPrefix(req.URL.Path, h.prefix)
-	fileServer.ServeHTTP(w, req)
-}
-
-func index() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler := &prefixedHandler{
-			prefix: "/cluster-config",
-		}
-		handler.ServeHTTP(w, r)
-	})
 }
 
 func healthz() http.Handler {

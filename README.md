@@ -27,14 +27,14 @@ cluster, you can consider using Route.
 ##### How to deploy?
 
 ```bash
-$ oc create -f ./manifests
+$ oc apply -f ./manifests
 ```
 
 ##### How to expose the GIT server?
 
 ```bash
 $ oc expose svc/gitserver
-$ git clone http://<ROUTE_URL>
+$ git clone http://<ROUTE_URL> cluster-config
 ```
 
 ##### How to configure?

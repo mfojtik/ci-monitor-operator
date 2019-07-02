@@ -31,7 +31,7 @@ type GitStorage struct {
 
 func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
 	// If the repo does not exists, do git init
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
 		_, err := git.PlainInit(path, false)
 		if err != nil {
 			return nil, err
@@ -42,6 +42,7 @@ func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
 		return nil, err
 	}
 	storage := &GitStorage{path: path, repo: repo}
+
 	return storage, nil
 }
 
@@ -57,7 +58,7 @@ func (s *GitStorage) OnAdd(obj interface{}) {
 		klog.Warningf("Unable to write file %q: %v", name, err)
 		return
 	}
-	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q added", name))
+	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%s added", name))
 	if err != nil {
 		klog.Warningf("Unable to commit file %q: %v", name, err)
 	}
@@ -77,7 +78,7 @@ func (s *GitStorage) OnUpdate(_, obj interface{}) {
 		klog.Warningf("Unable to write file %q: %v", name, err)
 		return
 	}
-	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q updated", name))
+	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%s updated", name))
 	if err != nil {
 		klog.Warningf("Unable to commit file %q: %v", name, err)
 	}
@@ -191,7 +192,8 @@ func (s *GitStorage) updateRefsFile() {
 	var data []byte
 	err := refs.ForEach(func(ref *plumbing.Reference) error {
 		if ref.Type() == plumbing.HashReference {
-			data = append(data, []byte(fmt.Sprintf("%s\n", ref))...)
+			s := ref.Strings()
+			data = append(data, []byte(fmt.Sprintf("%s\t%s\n", s[1], s[0]))...)
 		}
 		return nil
 	})

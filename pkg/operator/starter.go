@@ -9,7 +9,6 @@ import (
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 
 	"github.com/mfojtik/config-history-operator/pkg/controller"
-	"github.com/mfojtik/config-history-operator/pkg/gitserver"
 	"github.com/mfojtik/config-history-operator/pkg/storage"
 )
 
@@ -29,7 +28,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		return err
 	}
 
-	configStore, err := storage.NewGitStorage("/tmp/repository")
+	configStore, err := storage.NewGitStorage("/repository")
 	if err != nil {
 		return err
 	}
@@ -40,13 +39,6 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 	}
 
 	go openshiftConfigObserver.Run(ctx.Done())
-
-	// Run git server so we can browse the history but wait for the observer to be running first
-	// This is also used to report healthz
-	go func() {
-		<-openshiftConfigObserver.IsReady()
-		gitserver.Run("/tmp/repository", "0.0.0.0:8080")
-	}()
 
 	<-ctx.Done()
 
