@@ -4,7 +4,7 @@ metadata:
   name: system:openshift:operator:config-history-operator
 roleRef:
   kind: ClusterRole
-  name: cluster-admin
+  name: cluster-admin # TODO: This should be cluster-viewer
 subjects:
   - kind: ServiceAccount
     namespace: config-history-operator

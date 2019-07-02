@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -27,8 +28,9 @@ var (
 
 func Run(directory string, addr string) {
 	listenAddr = addr
-	directory = directory
-	klog.Infof("Git HTTP Server is starting...")
+	repoDir = directory
+
+	klog.Infof("Started serving GIT repository on %s/cluster-config ...", listenAddr)
 
 	router := http.NewServeMux()
 	router.Handle("/cluster-config", index())
@@ -74,9 +76,22 @@ func Run(directory string, addr string) {
 	<-done
 }
 
+type prefixedHandler struct {
+	prefix string
+}
+
+func (h *prefixedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	fileServer := http.FileServer(http.Dir(filepath.Join(repoDir, ".git")))
+	req.URL.Path = strings.TrimPrefix(req.URL.Path, h.prefix)
+	fileServer.ServeHTTP(w, req)
+}
+
 func index() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Handle("/", http.FileServer(http.Dir(filepath.Join(repoDir, ".git"))))
+		handler := &prefixedHandler{
+			prefix: "/cluster-config",
+		}
+		handler.ServeHTTP(w, r)
 	})
 }
 
@@ -98,7 +113,7 @@ func logging() func(http.Handler) http.Handler {
 				if !ok {
 					requestID = "unknown"
 				}
-				klog.Infof(requestID, r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
+				klog.Infof("[%s][%s] %q [%s](%s)", requestID, r.Method, r.URL.Path, r.RemoteAddr, r.UserAgent())
 			}()
 			next.ServeHTTP(w, r)
 		})

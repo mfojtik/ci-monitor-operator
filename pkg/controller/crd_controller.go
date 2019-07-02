@@ -23,8 +23,6 @@ import (
 	"k8s.io/klog"
 
 	"github.com/openshift/library-go/pkg/operator/events"
-
-	"github.com/mfojtik/config-history-operator/pkg/storage"
 )
 
 const (
@@ -53,20 +51,20 @@ type ConfigObserverController struct {
 	cachedDiscovery discovery.CachedDiscoveryInterface
 
 	openshiftConfigObservers []*dynamicConfigInformer
-	configStorage            storage.ConfigStorage
+	storageHandler           cache.ResourceEventHandler
 }
 
 func NewOpenShiftConfigObserverController(
 	dynamicClient dynamic.Interface,
 	extensionsClient apiextensionsclient.Interface,
 	discoveryClient *discovery.DiscoveryClient,
-	configStorage storage.ConfigStorage,
+	configStorage cache.ResourceEventHandler,
 ) (*ConfigObserverController, error) {
 	c := &ConfigObserverController{
-		dynamicClient: dynamicClient,
-		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ConfigObserverController"),
-		crdInformer:   apiextensionsv1beta1informer.NewCustomResourceDefinitionInformer(extensionsClient, defaultResyncDuration, cache.Indexers{}),
-		configStorage: configStorage,
+		dynamicClient:  dynamicClient,
+		queue:          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "ConfigObserverController"),
+		crdInformer:    apiextensionsv1beta1informer.NewCustomResourceDefinitionInformer(extensionsClient, defaultResyncDuration, cache.Indexers{}),
+		storageHandler: configStorage,
 	}
 
 	c.cachedDiscovery = memory.NewMemCacheClient(discoveryClient)
@@ -166,8 +164,8 @@ func (c *ConfigObserverController) sync() error {
 				continue
 			}
 
-			// we got mapping, lets run the dynamicInformer for the config and install GIT configStorage event handlers
-			dynamicInformer := newDynamicConfigInformer(kind.Kind, mapping.Resource, c.dynamicClient, c.configStorage.EventHandlers())
+			// we got mapping, lets run the dynamicInformer for the config and install GIT storageHandler event handlers
+			dynamicInformer := newDynamicConfigInformer(kind.Kind, mapping.Resource, c.dynamicClient, c.storageHandler)
 			waitForCacheSyncFn = append(waitForCacheSyncFn, dynamicInformer.hasInformerCacheSynced)
 
 			go func(k schema.GroupVersionKind) {

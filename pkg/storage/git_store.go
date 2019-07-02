@@ -2,27 +2,35 @@ package storage
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
+	"sigs.k8s.io/yaml"
 )
 
 type GitStorage struct {
 	repo *git.Repository
+	path string
 
+	// The storage must be synchronized.
 	sync.Mutex
 }
 
-func NewGitStorage(path string) (*GitStorage, error) {
+func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
+	// If the repo does not exists, do git init
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		_, err := git.PlainInit(path, false)
 		if err != nil {
@@ -33,30 +41,106 @@ func NewGitStorage(path string) (*GitStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &GitStorage{
-		repo: repo,
-	}, nil
+	storage := &GitStorage{path: path, repo: repo}
+	return storage, nil
 }
 
-func (s *GitStorage) addAndCommit(name string) (string, error) {
-	worktree, err := s.repo.Worktree()
+func (s *GitStorage) OnAdd(obj interface{}) {
+	s.Lock()
+	defer s.Unlock()
+	name, content, err := decodeUnstructuredObject(obj)
+	if err != nil {
+		klog.Warningf("Unable to decode %q: %v", name, err)
+		return
+	}
+	if err := s.writeToFilesystem(name, content); err != nil {
+		klog.Warningf("Unable to write file %q: %v", name, err)
+		return
+	}
+	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q added", name))
+	if err != nil {
+		klog.Warningf("Unable to commit file %q: %v", name, err)
+	}
+	s.updateRefsFile()
+	klog.Infof("Added %q in commit %q", name, hash)
+}
+
+func (s *GitStorage) OnUpdate(_, obj interface{}) {
+	s.Lock()
+	defer s.Unlock()
+	name, content, err := decodeUnstructuredObject(obj)
+	if err != nil {
+		klog.Warningf("Unable to decode %q: %v", name, err)
+		return
+	}
+	if err := s.writeToFilesystem(name, content); err != nil {
+		klog.Warningf("Unable to write file %q: %v", name, err)
+		return
+	}
+	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q updated", name))
+	if err != nil {
+		klog.Warningf("Unable to commit file %q: %v", name, err)
+	}
+	s.updateRefsFile()
+	klog.Infof("Updated %q in commit %q", name, hash)
+}
+
+func (s *GitStorage) OnDelete(obj interface{}) {
+	s.Lock()
+	defer s.Unlock()
+	name, _, err := decodeUnstructuredObject(obj)
+	if err != nil {
+		klog.Warningf("Unable to decode %q: %v", name, err)
+		return
+	}
+	if err := s.deleteFile(name); err != nil {
+		klog.Warningf("Unable to delete file %q: %v", name, err)
+		return
+	}
+	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q removes", name))
+	if err != nil {
+		klog.Warningf("Unable to commit file %q: %v", name, err)
+	}
+	s.updateRefsFile()
+	klog.Infof("Deleted %q in commit %q", name, hash)
+}
+
+func decodeUnstructuredObject(obj interface{}) (string, []byte, error) {
+	objUnstructured := obj.(*unstructured.Unstructured)
+	filename := getObjectFilename(objUnstructured.GroupVersionKind())
+	objectBytes, err := runtime.Encode(unstructured.UnstructuredJSONScheme, objUnstructured)
+	if err != nil {
+		return filename, nil, err
+	}
+	objectYAML, err := yaml.JSONToYAML(objectBytes)
+	if err != nil {
+		return filename, nil, err
+	}
+	return filename, objectYAML, err
+}
+
+func getObjectFilename(gvk schema.GroupVersionKind) string {
+	return strings.ToLower(fmt.Sprintf("%s.%s.%s.yaml", gvk.Kind, gvk.Version, gvk.Group))
+}
+
+func (s *GitStorage) commitFile(name, component, message string) (string, error) {
+	t, err := s.repo.Worktree()
 	if err != nil {
 		return "", err
 	}
-	if _, err := worktree.Add(name); err != nil {
+	if _, err := t.Add(name); err != nil {
 		return "", err
 	}
-	hash, err := worktree.Commit("test commit", &git.CommitOptions{
+	hash, err := t.Commit(message, &git.CommitOptions{
 		All: true,
 		Author: &object.Signature{
-			Name:  "Operator",
-			Email: "operator@openshift.io",
+			Name:  "config-history-operator",
+			Email: "config-history-operator@openshift.io",
 			When:  time.Now(),
 		},
-		// TODO: Provide the CRD operator?
 		Committer: &object.Signature{
-			Name:  "Operator",
-			Email: "operator@openshift.io",
+			Name:  component,
+			Email: component + "@openshift.io",
 			When:  time.Now(),
 		},
 	})
@@ -67,90 +151,57 @@ func (s *GitStorage) addAndCommit(name string) (string, error) {
 }
 
 func (s *GitStorage) deleteFile(name string) error {
-	worktree, err := s.repo.Worktree()
+	t, err := s.repo.Worktree()
 	if err != nil {
 		return err
 	}
-	return worktree.Filesystem.Remove(name)
+	return t.Filesystem.Remove(name)
 }
 
-func (s *GitStorage) updateFile(name string, content []byte) error {
-	worktree, err := s.repo.Worktree()
+func (s *GitStorage) writeToFilesystem(name string, content []byte) error {
+	t, err := s.repo.Worktree()
 	if err != nil {
 		return err
 	}
 
-	// Simple "create file"
-	if _, err := worktree.Filesystem.Lstat(name); err != nil {
-		if os.IsNotExist(err) {
-			f, err := worktree.Filesystem.Create(name)
-			if err != nil {
-				return err
-			}
-			if _, err := f.Write(content); err != nil {
-				return err
-			}
-			return f.Close()
+	if _, err := t.Filesystem.Lstat(name); err != nil {
+		if !os.IsNotExist(err) {
+			return err
 		}
+		f, err := t.Filesystem.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(content); err != nil {
+			return err
+		}
+		return f.Close()
 	}
 
-	// Updating existing file by replacing the original
-	if err := worktree.Filesystem.Remove(name); err != nil {
+	if err := s.deleteFile(name); err != nil {
 		return err
 	}
-	return s.updateFile(name, content)
+
+	return s.writeToFilesystem(name, content)
 }
 
-func getConfigName(gvk schema.GroupVersionKind) string {
-	return strings.ToLower(fmt.Sprintf("%s.%s.%s.json", gvk.Kind, gvk.Version, gvk.Group))
-}
-
-func (s *GitStorage) addConfigObject(obj interface{}) {
-	s.Lock()
-	defer s.Unlock()
-	unstruct := obj.(*unstructured.Unstructured)
-	objBytes, err := runtime.Encode(unstructured.UnstructuredJSONScheme, unstruct)
+// updateRefsFile populate .git/info/refs which is needed for git clone
+func (s *GitStorage) updateRefsFile() {
+	refs, _ := s.repo.References()
+	var data []byte
+	err := refs.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Type() == plumbing.HashReference {
+			data = append(data, []byte(fmt.Sprintf("%s\n", ref))...)
+		}
+		return nil
+	})
 	if err != nil {
 		panic(err)
 	}
-	klog.Infof("Observed change in %q ...", getConfigName(unstruct.GroupVersionKind()))
-	if err := s.updateFile(getConfigName(unstruct.GroupVersionKind()), objBytes); err != nil {
-		klog.Warningf("Failed to adding change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
+	if err := os.MkdirAll(filepath.Join(s.path, ".git", "info"), os.ModePerm); err != nil {
+		panic(err)
 	}
-	hash, err := s.addAndCommit(getConfigName(unstruct.GroupVersionKind()))
-	if err != nil {
-		klog.Warningf("Failed to commit change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
-	}
-
-	klog.Infof("Committed %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
-}
-
-func (s *GitStorage) updateConfigObject(old, new interface{}) {
-	s.Lock()
-	defer s.Unlock()
-	s.addConfigObject(new)
-}
-
-func (s *GitStorage) deleteConfigObject(obj interface{}) {
-	s.Lock()
-	defer s.Unlock()
-	// TODO: Deal with tombstone
-	unstruct := obj.(*unstructured.Unstructured)
-	if err := s.deleteFile(getConfigName(unstruct.GroupVersionKind())); err != nil {
-		klog.Warningf("Failed to delete file: %q: %v", getConfigName(unstruct.GroupVersionKind()), err)
-	}
-	hash, err := s.addAndCommit(getConfigName(unstruct.GroupVersionKind()))
-	if err != nil {
-		klog.Warningf("Failed to commit change in %q to GIT: %v", getConfigName(unstruct.GroupVersionKind()), err)
-	}
-
-	klog.Infof("Committed %q change for %q", hash, getConfigName(unstruct.GroupVersionKind()))
-}
-
-func (s *GitStorage) EventHandlers() cache.ResourceEventHandlerFuncs {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc:    s.addConfigObject,
-		UpdateFunc: s.updateConfigObject,
-		DeleteFunc: s.deleteConfigObject,
+	if err := ioutil.WriteFile(filepath.Join(s.path, ".git", "info", "refs"), data, os.ModePerm); err != nil {
+		panic(err)
 	}
 }
