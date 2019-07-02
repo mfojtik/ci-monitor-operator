@@ -129,6 +129,13 @@ func (s *GitStorage) commitFile(name, component, message string) (string, error)
 	if err != nil {
 		return "", err
 	}
+	status, err := t.Status()
+	if err != nil {
+		return "", err
+	}
+	if status.IsClean() {
+		return "", nil
+	}
 	if _, err := t.Add(name); err != nil {
 		return "", err
 	}
