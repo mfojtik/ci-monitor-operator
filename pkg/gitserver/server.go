@@ -21,7 +21,7 @@ const (
 
 var (
 	listenAddr string
-	healthy    int32
+	ready      int32
 )
 
 func Run(directory string, addr string) {
@@ -32,8 +32,9 @@ func Run(directory string, addr string) {
 	router := http.NewServeMux()
 
 	fileserver := http.FileServer(http.Dir(filepath.Join(directory, ".git")))
+
 	router.Handle("/", fileserver)
-	router.Handle("/healthz", healthz())
+	router.Handle("/readyz", readyz())
 
 	nextRequestID := func() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
@@ -54,7 +55,7 @@ func Run(directory string, addr string) {
 	go func() {
 		<-quit
 		klog.Infof("Git HTTP Server is shutting down...")
-		atomic.StoreInt32(&healthy, 0)
+		atomic.StoreInt32(&ready, 0)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -67,7 +68,16 @@ func Run(directory string, addr string) {
 	}()
 
 	klog.Infof("Server is ready to handle requests at %q", listenAddr)
-	atomic.StoreInt32(&healthy, 1)
+	go func() {
+		for {
+			_, err := os.Stat(filepath.Join(directory, ".git"))
+			if err == nil {
+				atomic.StoreInt32(&ready, 1)
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		klog.Fatalf("Could not listen on %s: %v\n", listenAddr, err)
 	}
@@ -75,9 +85,9 @@ func Run(directory string, addr string) {
 	<-done
 }
 
-func healthz() http.Handler {
+func readyz() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.LoadInt32(&healthy) == 1 {
+		if atomic.LoadInt32(&ready) == 1 {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

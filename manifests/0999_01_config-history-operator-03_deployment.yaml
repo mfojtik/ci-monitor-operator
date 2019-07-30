@@ -29,9 +29,9 @@ spec:
         - name: gitserver
           image: docker.io/mfojtik/config-history-operator:v0.1
           imagePullPolicy: Always # Change this when the operator is stable
-          livenessProbe:
+          readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8080
           volumeMounts:
             - mountPath: /repository

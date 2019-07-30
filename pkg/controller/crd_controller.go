@@ -138,7 +138,6 @@ func (c *ConfigObserverController) sync() error {
 			needObserverList = append(needObserverList, configKind.String())
 		}
 	}
-	klog.V(5).Infof("Need synchronization: %q", strings.Join(needObserverList, ","))
 
 	var (
 		waitForCacheSyncFn  []cache.InformerSynced
@@ -166,7 +165,7 @@ func (c *ConfigObserverController) sync() error {
 
 			// we got mapping, lets run the dynamicInformer for the config and install GIT storageHandler event handlers
 			dynamicInformer := newDynamicConfigInformer(kind.Kind, mapping.Resource, c.dynamicClient, c.storageHandler)
-			waitForCacheSyncFn = append(waitForCacheSyncFn, dynamicInformer.hasInformerCacheSynced)
+			waitForCacheSyncFn = append(waitForCacheSyncFn, dynamicInformer.hasSynced)
 
 			go func(k schema.GroupVersionKind) {
 				defer klog.V(3).Infof("Shutting down dynamic informer for %q ...", k.String())

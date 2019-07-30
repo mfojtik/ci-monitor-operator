@@ -11,8 +11,8 @@ import (
 )
 
 type dynamicConfigInformer struct {
-	informer             cache.SharedIndexInformer
-	hasSynced            cache.InformerSynced
+	informer  cache.SharedIndexInformer
+	hasSynced cache.InformerSynced
 
 	groupVersionResource schema.GroupVersionResource
 	configKind           string
@@ -42,10 +42,6 @@ func (c dynamicConfigInformer) isKind(kind schema.GroupVersionKind) bool {
 	} == kind
 }
 
-func (c dynamicConfigInformer) hasInformerCacheSynced() bool {
-	return c.hasSynced()
-}
-
 func (c dynamicConfigInformer) String() string {
 	return fmt.Sprintf("dynamic informer (%s)", c.groupVersionResource.String())
 }
@@ -54,7 +50,7 @@ func (c *dynamicConfigInformer) run(stopCh <-chan struct{}) {
 	c.Lock()
 	defer c.Unlock()
 	if c.isRunning {
-		panic("dynamic informer is already running")
+		panic(fmt.Sprintf("dynamic informer is already running for %v", c.groupVersionResource))
 	}
 	c.isRunning = true
 	c.informer.Run(stopCh)

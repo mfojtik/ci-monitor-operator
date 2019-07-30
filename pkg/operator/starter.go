@@ -28,6 +28,7 @@ func RunOperator(ctx *controllercmd.ControllerContext) error {
 		return err
 	}
 
+	// TODO: Make this configurable
 	configStore, err := storage.NewGitStorage("/repository")
 	if err != nil {
 		return err

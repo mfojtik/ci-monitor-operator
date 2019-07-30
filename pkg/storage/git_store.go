@@ -29,6 +29,8 @@ type GitStorage struct {
 	sync.Mutex
 }
 
+// NewGitStorage initialize the GIT based storage. Using this storage, every change to the config
+// resource is recorded as a commit into GIT database.
 func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
 	// If the repo does not exists, do git init
 	if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
@@ -54,11 +56,13 @@ func (s *GitStorage) OnAdd(obj interface{}) {
 		klog.Warningf("Unable to decode %q: %v", name, err)
 		return
 	}
-	if err := s.writeToFilesystem(name, content); err != nil {
+	if err := s.write(name, content); err != nil {
 		klog.Warningf("Unable to write file %q: %v", name, err)
 		return
 	}
-	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%s added", name))
+
+	// TODO: Use the "real" author here (this will need mutating admission that will record username into annotation)
+	hash, err := s.commit(name, "operator", fmt.Sprintf("%s added", name))
 	if err != nil {
 		klog.Warningf("Unable to commit file %q: %v", name, err)
 	}
@@ -74,11 +78,13 @@ func (s *GitStorage) OnUpdate(_, obj interface{}) {
 		klog.Warningf("Unable to decode %q: %v", name, err)
 		return
 	}
-	if err := s.writeToFilesystem(name, content); err != nil {
+	if err := s.write(name, content); err != nil {
 		klog.Warningf("Unable to write file %q: %v", name, err)
 		return
 	}
-	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%s updated", name))
+
+	// TODO: Use the "real" author here (this will need mutating admission that will record username into annotation)
+	hash, err := s.commit(name, "operator", fmt.Sprintf("%s modified", name))
 	if err != nil {
 		klog.Warningf("Unable to commit file %q: %v", name, err)
 	}
@@ -94,11 +100,11 @@ func (s *GitStorage) OnDelete(obj interface{}) {
 		klog.Warningf("Unable to decode %q: %v", name, err)
 		return
 	}
-	if err := s.deleteFile(name); err != nil {
+	if err := s.delete(name); err != nil {
 		klog.Warningf("Unable to delete file %q: %v", name, err)
 		return
 	}
-	hash, err := s.commitFile(name, "operator", fmt.Sprintf("%q removes", name))
+	hash, err := s.commit(name, "operator", fmt.Sprintf("%q removed", name))
 	if err != nil {
 		klog.Warningf("Unable to commit file %q: %v", name, err)
 	}
@@ -108,7 +114,7 @@ func (s *GitStorage) OnDelete(obj interface{}) {
 
 func decodeUnstructuredObject(obj interface{}) (string, []byte, error) {
 	objUnstructured := obj.(*unstructured.Unstructured)
-	filename := getObjectFilename(objUnstructured.GroupVersionKind())
+	filename := resourceFilename(objUnstructured.GroupVersionKind())
 	objectBytes, err := runtime.Encode(unstructured.UnstructuredJSONScheme, objUnstructured)
 	if err != nil {
 		return filename, nil, err
@@ -120,11 +126,11 @@ func decodeUnstructuredObject(obj interface{}) (string, []byte, error) {
 	return filename, objectYAML, err
 }
 
-func getObjectFilename(gvk schema.GroupVersionKind) string {
+func resourceFilename(gvk schema.GroupVersionKind) string {
 	return strings.ToLower(fmt.Sprintf("%s.%s.%s.yaml", gvk.Kind, gvk.Version, gvk.Group))
 }
 
-func (s *GitStorage) commitFile(name, component, message string) (string, error) {
+func (s *GitStorage) commit(name, component, message string) (string, error) {
 	t, err := s.repo.Worktree()
 	if err != nil {
 		return "", err
@@ -158,7 +164,7 @@ func (s *GitStorage) commitFile(name, component, message string) (string, error)
 	return hash.String(), err
 }
 
-func (s *GitStorage) deleteFile(name string) error {
+func (s *GitStorage) delete(name string) error {
 	t, err := s.repo.Worktree()
 	if err != nil {
 		return err
@@ -166,7 +172,7 @@ func (s *GitStorage) deleteFile(name string) error {
 	return t.Filesystem.Remove(name)
 }
 
-func (s *GitStorage) writeToFilesystem(name string, content []byte) error {
+func (s *GitStorage) write(name string, content []byte) error {
 	t, err := s.repo.Worktree()
 	if err != nil {
 		return err
@@ -186,14 +192,14 @@ func (s *GitStorage) writeToFilesystem(name string, content []byte) error {
 		return f.Close()
 	}
 
-	if err := s.deleteFile(name); err != nil {
+	if err := s.delete(name); err != nil {
 		return err
 	}
 
-	return s.writeToFilesystem(name, content)
+	return s.write(name, content)
 }
 
-// updateRefsFile populate .git/info/refs which is needed for git clone
+// updateRefsFile populate .git/info/refs which is needed for git clone HTTP server
 func (s *GitStorage) updateRefsFile() {
 	refs, _ := s.repo.References()
 	var data []byte
