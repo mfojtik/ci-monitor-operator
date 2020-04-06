@@ -5,7 +5,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apiextensionsv1beta1informer "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -13,7 +12,12 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/mfojtik/ci-monitor-operator/pkg/controller"
+	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	configv1informer "github.com/openshift/client-go/config/informers/externalversions/config/v1"
+	"github.com/openshift/library-go/pkg/controller/controllercmd"
+
+	"github.com/mfojtik/ci-monitor-operator/pkg/controller/clusteroperatormetric"
+	"github.com/mfojtik/ci-monitor-operator/pkg/controller/configmonitor"
 	"github.com/mfojtik/ci-monitor-operator/pkg/storage"
 )
 
@@ -37,14 +41,21 @@ func RunOperator(ctx context.Context, controllerCtx *controllercmd.ControllerCon
 	if repositoryPathEnv := os.Getenv("REPOSITORY_PATH"); len(repositoryPathEnv) > 0 {
 		repositoryPath = repositoryPathEnv
 	}
+
 	configStore, err := storage.NewGitStorage(repositoryPath)
 	if err != nil {
 		return err
 	}
 
+	configClient, err := configv1client.NewForConfig(controllerCtx.KubeConfig)
+	if err != nil {
+		return err
+	}
+
+	configInformer := configv1informer.NewClusterOperatorInformer(configClient, time.Minute, cache.Indexers{})
 	crdInformer := apiextensionsv1beta1informer.NewCustomResourceDefinitionInformer(kubeClient, time.Minute, cache.Indexers{})
 
-	openshiftConfigObserver := controller.NewConfigObserverController(
+	openshiftConfigObserver := configmonitor.NewConfigObserverController(
 		dynamicClient,
 		crdInformer,
 		discoveryClient,
@@ -58,8 +69,13 @@ func RunOperator(ctx context.Context, controllerCtx *controllercmd.ControllerCon
 		controllerCtx.EventRecorder,
 	)
 
+	clusterOperatorMetric := clusteroperatormetric.NewClusterOperatorMetricController(configInformer, configClient.ConfigV1(), controllerCtx.EventRecorder)
+
 	go crdInformer.Run(ctx.Done())
+	go configInformer.Run(ctx.Done())
+
 	go openshiftConfigObserver.Run(ctx, 1)
+	go clusterOperatorMetric.Run(ctx, 1)
 
 	<-ctx.Done()
 
