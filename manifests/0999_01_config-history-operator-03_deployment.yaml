@@ -1,33 +1,33 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: config-history-operator
-  name: config-history-operator
+  namespace: ci-monitor-operator
+  name: ci-monitor-operator
   labels:
-    app: config-history-operator
+    app: ci-monitor-operator
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: config-history-operator
+      app: ci-monitor-operator
   template:
     metadata:
-      name: config-history-operator
+      name: ci-monitor-operator
       labels:
-        app: config-history-operator
+        app: ci-monitor-operator
     spec:
-      serviceAccountName: config-history-operator
+      serviceAccountName: ci-monitor-operator
       volumes:
         - name: config
           configMap:
-            name: config-history-operator-config
+            name: ci-monitor-operator-config
         - name: repository
           emptyDir: {}
       containers:
         - name: gitserver
-          image: docker.io/mfojtik/config-history-operator:v0.1
+          image: docker.io/mfojtik/ci-monitor-operator:v0.1
           imagePullPolicy: Always # Change this when the operator is stable
           readinessProbe:
             httpGet:
@@ -40,14 +40,14 @@ spec:
             - containerPort: 8080
               name: gitserver
               protocol: TCP
-          command: ["config-history-operator", "gitserver"]
+          command: ["ci-monitor-operator", "gitserver"]
           resources:
             requests:
               memory: 50Mi
               cpu: 10m
           env:
             - name: OPERATOR_IMAGE
-              value: docker.io/mfojtik/config-history-operator:v0.1
+              value: docker.io/mfojtik/ci-monitor-operator:v0.1
             - name: OPERAND_IMAGE_VERSION
               value: "0.0.1-snapshot-config-history"
             - name: OPERATOR_IMAGE_VERSION
@@ -58,7 +58,7 @@ spec:
                   fieldPath: metadata.name
           terminationMessagePolicy: FallbackToLogsOnError
         - name: operator
-          image: docker.io/mfojtik/config-history-operator:v0.1
+          image: docker.io/mfojtik/ci-monitor-operator:v0.1
           imagePullPolicy: Always # Change this when the operator is stable
           volumeMounts:
           - mountPath: /var/run/configmaps/config
@@ -69,7 +69,7 @@ spec:
             - containerPort: 8443
               name: metrics
               protocol: TCP
-          command: ["config-history-operator", "operator"]
+          command: ["ci-monitor-operator", "operator"]
           args: ["--config=/var/run/configmaps/config/config.yaml", "--v=5"]
           resources:
             requests:
@@ -77,7 +77,7 @@ spec:
               cpu: 10m
           env:
             - name: OPERATOR_IMAGE
-              value: docker.io/mfojtik/config-history-operator:v0.1
+              value: docker.io/mfojtik/ci-monitor-operator:v0.1
             - name: OPERAND_IMAGE_VERSION
               value: "0.0.1-snapshot-config-history"
             - name: OPERATOR_IMAGE_VERSION

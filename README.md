@@ -1,4 +1,4 @@
-## config-history-operator
+## ci-monitor-operator
 
 The purpose of this operator is to continuously collect all changes to OpenShift v4 configuration resources and record
 all the changes in local Git repository. The operator offer HTTP service that can be used to clone the repository.

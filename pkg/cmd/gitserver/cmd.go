@@ -3,7 +3,7 @@ package gitserver
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/mfojtik/config-history-operator/pkg/gitserver"
+	"github.com/mfojtik/ci-monitor-operator/pkg/gitserver"
 )
 
 func NewGitServer() *cobra.Command {

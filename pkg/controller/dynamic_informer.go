@@ -1,13 +1,13 @@
 package controller
 
 import (
-	"fmt"
-	"sync"
+	"context"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type dynamicConfigInformer struct {
@@ -16,9 +16,6 @@ type dynamicConfigInformer struct {
 
 	groupVersionResource schema.GroupVersionResource
 	configKind           string
-
-	isRunning bool
-	sync.Mutex
 }
 
 func newDynamicConfigInformer(kind string, configResource schema.GroupVersionResource, client dynamic.Interface, resourceHandlers ...cache.ResourceEventHandler) *dynamicConfigInformer {
@@ -42,16 +39,6 @@ func (c dynamicConfigInformer) isKind(kind schema.GroupVersionKind) bool {
 	} == kind
 }
 
-func (c dynamicConfigInformer) String() string {
-	return fmt.Sprintf("dynamic informer (%s)", c.groupVersionResource.String())
-}
-
-func (c *dynamicConfigInformer) run(stopCh <-chan struct{}) {
-	c.Lock()
-	defer c.Unlock()
-	if c.isRunning {
-		panic(fmt.Sprintf("dynamic informer is already running for %v", c.groupVersionResource))
-	}
-	c.isRunning = true
-	c.informer.Run(stopCh)
+func (c *dynamicConfigInformer) run(ctx context.Context) {
+	c.informer.Run(ctx.Done())
 }

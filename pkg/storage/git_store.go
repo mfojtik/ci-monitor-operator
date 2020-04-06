@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 	"sigs.k8s.io/yaml"
@@ -25,12 +26,22 @@ type GitStorage struct {
 	repo *git.Repository
 	path string
 
-	// The storage must be synchronized.
+	// Writing to Git repository must be synced otherwise Git will freak out
 	sync.Mutex
 }
 
-// NewGitStorage initialize the GIT based storage. Using this storage, every change to the config
-// resource is recorded as a commit into GIT database.
+type gitOperation int
+
+const (
+	gitOpAdded gitOperation = iota
+	gitOpModified
+	gitOpDeleted
+	gitOpError
+)
+
+// NewGitStorage returns the resource event handler capable of storing changes observed on resource
+// into a Git repository. Each change is stored as separate commit which means a full history of the
+// resource lifecycle is preserved.
 func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
 	// If the repo does not exists, do git init
 	if _, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) {
@@ -48,73 +59,73 @@ func NewGitStorage(path string) (cache.ResourceEventHandler, error) {
 	return storage, nil
 }
 
-func (s *GitStorage) OnAdd(obj interface{}) {
+// handle handles different operations on git
+func (s *GitStorage) handle(obj interface{}, delete bool) {
 	s.Lock()
 	defer s.Unlock()
-	name, content, err := decodeUnstructuredObject(obj)
+	objUnstructured, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		klog.Warningf("Object is not unstructured: %v", obj)
+	}
+	name, content, err := decodeUnstructuredObject(objUnstructured)
 	if err != nil {
-		klog.Warningf("Unable to decode %q: %v", name, err)
+		klog.Warningf("Decoding %q failed: %v", name, err)
 		return
 	}
-	if err := s.write(name, content); err != nil {
-		klog.Warningf("Unable to write file %q: %v", name, err)
+	defer s.updateRefsFile()
+	if delete {
+		if err := s.delete(name); err != nil {
+			klog.Warningf("Unable to delete file %q: %v", name, err)
+			return
+		}
+		if err := s.commit(name, "operator", gitOpDeleted); err != nil {
+			klog.Warningf("Committing %q failed: %v", name, err)
+		}
+		return
+	}
+	operation, err := s.write(name, content)
+	if err != nil {
+		klog.Warningf("Writing file content failed %q: %v", name, err)
 		return
 	}
 
-	// TODO: Use the "real" author here (this will need mutating admission that will record username into annotation)
-	hash, err := s.commit(name, "operator", fmt.Sprintf("%s added", name))
-	if err != nil {
-		klog.Warningf("Unable to commit file %q: %v", name, err)
+	if err := s.commit(name, "operator", operation); err != nil {
+		klog.Warningf("Committing %q failed: %v", name, err)
 	}
-	s.updateRefsFile()
-	klog.Infof("Added %q in commit %q", name, hash)
+}
+
+func (s *GitStorage) OnAdd(obj interface{}) {
+	objUnstructured := obj.(*unstructured.Unstructured)
+	s.handle(objUnstructured, false)
 }
 
 func (s *GitStorage) OnUpdate(_, obj interface{}) {
-	s.Lock()
-	defer s.Unlock()
-	name, content, err := decodeUnstructuredObject(obj)
-	if err != nil {
-		klog.Warningf("Unable to decode %q: %v", name, err)
-		return
-	}
-	if err := s.write(name, content); err != nil {
-		klog.Warningf("Unable to write file %q: %v", name, err)
-		return
-	}
-
-	// TODO: Use the "real" author here (this will need mutating admission that will record username into annotation)
-	hash, err := s.commit(name, "operator", fmt.Sprintf("%s modified", name))
-	if err != nil {
-		klog.Warningf("Unable to commit file %q: %v", name, err)
-	}
-	s.updateRefsFile()
-	klog.Infof("Updated %q in commit %q", name, hash)
+	objUnstructured := obj.(*unstructured.Unstructured)
+	s.handle(objUnstructured, false)
 }
 
 func (s *GitStorage) OnDelete(obj interface{}) {
 	s.Lock()
 	defer s.Unlock()
-	name, _, err := decodeUnstructuredObject(obj)
-	if err != nil {
-		klog.Warningf("Unable to decode %q: %v", name, err)
-		return
+	objUnstructured, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			return
+		}
+		objUnstructured, ok = tombstone.Obj.(*unstructured.Unstructured)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Namespace %#v", obj))
+			return
+		}
 	}
-	if err := s.delete(name); err != nil {
-		klog.Warningf("Unable to delete file %q: %v", name, err)
-		return
-	}
-	hash, err := s.commit(name, "operator", fmt.Sprintf("%q removed", name))
-	if err != nil {
-		klog.Warningf("Unable to commit file %q: %v", name, err)
-	}
-	s.updateRefsFile()
-	klog.Infof("Deleted %q in commit %q", name, hash)
+	s.handle(objUnstructured, true)
 }
 
-func decodeUnstructuredObject(obj interface{}) (string, []byte, error) {
-	objUnstructured := obj.(*unstructured.Unstructured)
-	filename := resourceFilename(objUnstructured.GroupVersionKind())
+// decodeUnstructuredObject decodes the unstructured object we get from informer into a YAML bytes
+func decodeUnstructuredObject(objUnstructured *unstructured.Unstructured) (string, []byte, error) {
+	filename := resourceFilename(objUnstructured.GetName(), objUnstructured.GroupVersionKind())
 	objectBytes, err := runtime.Encode(unstructured.UnstructuredJSONScheme, objUnstructured)
 	if err != nil {
 		return filename, nil, err
@@ -126,30 +137,41 @@ func decodeUnstructuredObject(obj interface{}) (string, []byte, error) {
 	return filename, objectYAML, err
 }
 
-func resourceFilename(gvk schema.GroupVersionKind) string {
-	return strings.ToLower(fmt.Sprintf("%s.%s.%s.yaml", gvk.Kind, gvk.Version, gvk.Group))
+// resourceFilename extracts the filename out from the group version kind
+func resourceFilename(name string, gvk schema.GroupVersionKind) string {
+	return strings.ToLower(fmt.Sprintf("%s.%s.%s-%s.yaml", gvk.Kind, gvk.Version, gvk.Group, name))
 }
 
-func (s *GitStorage) commit(name, component, message string) (string, error) {
+// commit handle different git operators on repository
+func (s *GitStorage) commit(name, component string, operation gitOperation) error {
 	t, err := s.repo.Worktree()
 	if err != nil {
-		return "", err
+		return err
 	}
 	status, err := t.Status()
 	if err != nil {
-		return "", err
+		return err
 	}
 	if status.IsClean() {
-		return "", nil
+		return nil
 	}
 	if _, err := t.Add(name); err != nil {
-		return "", err
+		return err
+	}
+	message := ""
+	switch operation {
+	case gitOpAdded:
+		message = fmt.Sprintf("added %s", name)
+	case gitOpModified:
+		message = fmt.Sprintf("modified %s", name)
+	case gitOpDeleted:
+		message = fmt.Sprintf("deleted %s", name)
 	}
 	hash, err := t.Commit(message, &git.CommitOptions{
 		All: true,
 		Author: &object.Signature{
-			Name:  "config-history-operator",
-			Email: "config-history-operator@openshift.io",
+			Name:  "ci-monitor",
+			Email: "ci-monitor@openshift.io",
 			When:  time.Now(),
 		},
 		Committer: &object.Signature{
@@ -159,11 +181,13 @@ func (s *GitStorage) commit(name, component, message string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
-	return hash.String(), err
+	klog.Infof("Committed %q tracking %s", hash.String(), message)
+	return err
 }
 
+// delete handle removing the file in git repository
 func (s *GitStorage) delete(name string) error {
 	t, err := s.repo.Worktree()
 	if err != nil {
@@ -172,34 +196,44 @@ func (s *GitStorage) delete(name string) error {
 	return t.Filesystem.Remove(name)
 }
 
-func (s *GitStorage) write(name string, content []byte) error {
+// write handle writing the content into git repository
+func (s *GitStorage) write(name string, content []byte) (gitOperation, error) {
 	t, err := s.repo.Worktree()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	// If the file does not exists, create it and report it as new file
+	// This will get reflected in the commit message
 	if _, err := t.Filesystem.Lstat(name); err != nil {
 		if !os.IsNotExist(err) {
-			return err
+			return gitOpError, err
 		}
 		f, err := t.Filesystem.Create(name)
 		if err != nil {
-			return err
+			return gitOpError, err
 		}
-		if _, err := f.Write(content); err != nil {
-			return err
+		defer f.Close()
+		_, err = f.Write(content)
+		if err != nil {
+			return gitOpError, err
 		}
-		return f.Close()
+		return gitOpAdded, nil
 	}
 
-	if err := s.delete(name); err != nil {
-		return err
+	// If the file exists, updated its content and report modified
+	f, err := t.Filesystem.OpenFile(name, os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return gitOpError, err
 	}
-
-	return s.write(name, content)
+	defer f.Close()
+	if _, err := f.Write(content); err != nil {
+		return gitOpError, err
+	}
+	return gitOpModified, nil
 }
 
-// updateRefsFile populate .git/info/refs which is needed for git clone HTTP server
+// updateRefsFile populate .git/info/refs which is needed for git clone via HTTP server
 func (s *GitStorage) updateRefsFile() {
 	refs, _ := s.repo.References()
 	var data []byte

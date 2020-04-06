@@ -5,16 +5,16 @@ import (
 
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 
-	"github.com/mfojtik/config-history-operator/pkg/operator"
-	"github.com/mfojtik/config-history-operator/pkg/version"
+	"github.com/mfojtik/ci-monitor-operator/pkg/operator"
+	"github.com/mfojtik/ci-monitor-operator/pkg/version"
 )
 
 func NewOperator() *cobra.Command {
 	cmd := controllercmd.
-		NewControllerCommandConfig("config-history-operator", version.Get(), operator.RunOperator).
+		NewControllerCommandConfig("ci-monitor-operator", version.Get(), operator.RunOperator).
 		NewCommand()
 	cmd.Use = "operator"
-	cmd.Short = "Start the OpenShift config history operator"
+	cmd.Short = "Start the OpenShift CI monitor operator"
 
 	return cmd
 }
