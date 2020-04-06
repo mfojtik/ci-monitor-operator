@@ -19,6 +19,12 @@ openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name
 openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="console",status="True"} 1.58605565e+09
 ```
 
+To retrieve the metrics when running locally, you can use this command:
+
+```shell script
+oc get --loglevel=10 --insecure-skip-tls-verify --server=https://localhost:8443 --raw /metrics
+```
+
 ### Deploying
 
 Clone this repository and run the following command:
