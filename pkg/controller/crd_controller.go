@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	apiextensionsv1beta1informer "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions/apiextensions/v1beta1"
 	apiextensionsv1beta1lister "k8s.io/apiextensions-apiserver/pkg/client/listers/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,7 +22,7 @@ import (
 )
 
 var (
-	defaultResyncDuration = 5 * time.Minute
+	defaultResyncDuration = 1 * time.Minute
 )
 
 type ConfigObserverController struct {
@@ -39,7 +37,7 @@ type ConfigObserverController struct {
 
 func NewConfigObserverController(
 	dynamicClient dynamic.Interface,
-	extensionsClient apiextensionsclient.Interface,
+	crdInformer cache.SharedIndexInformer,
 	discoveryClient *discovery.DiscoveryClient,
 	configStorage cache.ResourceEventHandler,
 	monitoredResources []schema.GroupVersion,
@@ -47,7 +45,7 @@ func NewConfigObserverController(
 ) factory.Controller {
 	c := &ConfigObserverController{
 		dynamicClient:      dynamicClient,
-		crdInformer:        apiextensionsv1beta1informer.NewCustomResourceDefinitionInformer(extensionsClient, defaultResyncDuration, cache.Indexers{}),
+		crdInformer:        crdInformer,
 		storageHandler:     configStorage,
 		monitoredResources: monitoredResources,
 		cachedDiscovery:    memory.NewMemCacheClient(discoveryClient),
@@ -148,7 +146,7 @@ func (c *ConfigObserverController) sync(ctx context.Context, syncCtx factory.Syn
 			waitForCacheSyncFn = append(waitForCacheSyncFn, dynamicInformer.hasSynced)
 
 			go func(k schema.GroupVersionKind) {
-				klog.V(3).Infof("Starting dynamic informer for %q ...", k.String())
+				klog.Infof("Starting dynamic informer for %q ...", k.String())
 				dynamicInformer.run(ctx)
 			}(kind)
 			c.dynamicInformers = append(c.dynamicInformers, dynamicInformer)
