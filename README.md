@@ -1,39 +1,43 @@
 ## ci-monitor-operator
 
-The purpose of this operator is to continuously collect all changes to OpenShift v4 configuration resources and record
-all the changes in local Git repository. The operator offer HTTP service that can be used to clone the repository.
+The purpose of this operator is to provide precise timeline for changes in cluster operators during the CI runs.
+This operator will record all changes to `*.config.openshift.io` custom resources and store the deltas as GIT commits
+to the local repository. It exposes a simple HTTP server that can be used to clone this repository.
 
-Each OpenShift config resource is mirrored in a local Git repository. If change is observed in the original resource
-the change is applied to the local file and committed. 
+Additionally, this operator runs a controller that reflects the condition status of every cluster operator to Prometheus
+metrics. 
 
-As result, administrators can browse the configuration history of their OpenShift v4 cluster using Git.
+Example:
 
-##### What is being tracked?
+```
+# HELP openshift_ci_monitor_operator_cluster_operator_status [ALPHA] A metric that tracks individual cluster operator status.
+# TYPE openshift_ci_monitor_operator_cluster_operator_status gauge
+openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="authentication",status="True"} 1.586055762e+09
+openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="cloud-credential",status="True"} 1.586054345e+09
+openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="cluster-autoscaler",status="True"} 1.586055046e+09
+openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="config-operator",status="True"} 1.586054669e+09
+openshift_ci_monitor_operator_cluster_operator_status{condition="Available",name="console",status="True"} 1.58605565e+09
+```
 
-OpenShift v4 use `*.config.openshift.io` suffix for the Custom Resource Definitions representing the cluster configuration.
-Every instance of this CRD is being tracked and its changes recorded.
+### Deploying
 
-##### How it is tracked?
-
-This operator run CustomResourceDefinition informer that watches all CRD in the cluster. When a CRD with `config.openshift.io`
-suffix is observed, it creates a "dynamic informer" that is used to list and track any changes to all instances of this CRD.
-
-##### Where is the GIT repository?
-
-The default location is `/tmp/repository`. The HTTP git server is running on `0.0.0.0:8080`. To access this outside OpenShift
-cluster, you can consider using Route.
-
-
-##### How to deploy?
+Clone this repository and run the following command:
 
 ```bash
 $ oc apply -f ./manifests
 ```
 
-##### How to expose the GIT server?
+If you change something and built your own image, you have to subsitute the default image in deployment.
 
-```bash
-$ oc expose svc/gitserver
-$ git clone http://<ROUTE_URL> cluster-config
+### Development
+
+To run this operator locally, you will need a admin `kubeconfig` file. In next step, create the `ci-monitor-operator` namespace.
+Then run `make` command which will output a binary you can run using:
+
+```shell script
+oc delete configmaps --all -n ci-monitor-operator # cleanup locks
+REPOSITORY_PATH=/tmp/repository ./ci-monitor-operator operator --kubeconfig ~/kubeconfig --namespace=ci-monitor-operator
 ```
+
+You will find the Git change log inside /tmp/repository.
 
