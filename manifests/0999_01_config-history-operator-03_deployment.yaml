@@ -27,7 +27,7 @@ spec:
           emptyDir: {}
       containers:
         - name: gitserver
-          image: docker.io/mfojtik/ci-monitor-operator:v0.1
+          image: quay.io/mfojtik/ci-history-operator:v0.1-git
           imagePullPolicy: Always # Change this when the operator is stable
           readinessProbe:
             httpGet:
@@ -47,7 +47,7 @@ spec:
               cpu: 10m
           env:
             - name: OPERATOR_IMAGE
-              value: docker.io/mfojtik/ci-monitor-operator:v0.1
+              value: quay.io/mfojtik/ci-history-operator:v0.1-git
             - name: OPERAND_IMAGE_VERSION
               value: "0.0.1-snapshot-config-history"
             - name: OPERATOR_IMAGE_VERSION

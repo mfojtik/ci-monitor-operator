@@ -9,7 +9,7 @@ include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 )
 
 IMAGE_REGISTRY :=quay.io
-$(call build-image,ci-monitor-operator,$(IMAGE_REGISTRY)/mfojtik/ci-history-operator:v0.1-git, ./Dockerfile,.)
+$(call build-image,ci-monitor-operator,$(IMAGE_REGISTRY)/mfojtik/ci-monitor-operator:v0.1-git, ./Dockerfile,.)
 
 clean:
 	$(RM) ./ci-monitor-operator
