@@ -37,10 +37,3 @@ $ oc expose svc/gitserver
 $ git clone http://<ROUTE_URL> cluster-config
 ```
 
-##### How to configure?
-
-There is no configuration currently.
-
-##### Is this official OpenShift/RedHat supported?
-
-Hell no. This is just a PoC (was not even tried yet ;-)
